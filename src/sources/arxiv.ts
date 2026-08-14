@@ -9,8 +9,8 @@ import type { SourceAdapter } from "./types";
  *
  * The Atom XML endpoint requires no key. IMPORTANT: the API returns only
  * title + abstract + authors + categories — never the full paper text. Every
- * downstream consumer (ranking, entity extraction, provenance) is designed
- * around abstract-level data, not full text.
+ * downstream consumer (ranking, dedupe, snippets) is designed around
+ * abstract-level data, not full text.
  *
  * Search syntax: search_query=all:{query} does free-text matching over the
  * full metadata. We sort by relevance (sortBy=relevance) which the API

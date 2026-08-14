@@ -35,6 +35,10 @@ export function buildSnippet(ctx: SnippetContext): string {
       return semanticScholarSnippet(ctx.sourceId);
     case "github":
       return githubSnippet(ctx.sourceId);
+    case "kaggle":
+      return ctx.type === "repo"
+        ? kaggleKernelSnippet(ctx.sourceId)
+        : kaggleDatasetSnippet(ctx.sourceId);
     default:
       return `# "${ctx.title}" is not yet available from ${ctx.source}.`;
   }
@@ -130,6 +134,20 @@ function githubSnippet(repoPath: string): string {
   return `# clone the repository (public repos, no auth required)
 git clone https://github.com/${repoPath}.git
 cd ${repoPath.split("/").pop() ?? repoPath}`;
+}
+
+function kaggleDatasetSnippet(ref: string): string {
+  return `# pip install kagglehub
+import kagglehub
+
+path = kagglehub.dataset_download("${ref}")
+# path points to the downloaded dataset folder`;
+}
+
+function kaggleKernelSnippet(ref: string): string {
+  return `# pip install kaggle
+!kaggle kernels pull ${ref}
+# downloads the notebook/script source to ./${ref.split("/").pop() ?? ref}`;
 }
 
 function escapeQuery(q: string): string {

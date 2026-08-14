@@ -6,6 +6,7 @@ import { openML } from "./openml";
 import { arxiv } from "./arxiv";
 import { semanticscholar } from "./semanticscholar";
 import { github } from "./github";
+import { kaggle } from "./kaggle";
 
 export * from "./types";
 
@@ -17,4 +18,5 @@ export const SOURCES: SourceAdapter[] = [
   semanticscholar,
   dataGov,
   openML,
+  kaggle,
 ];

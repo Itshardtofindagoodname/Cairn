@@ -9,6 +9,7 @@ import {
   Landmark,
   Cpu,
   FlaskConical,
+  BarChart3,
 } from "lucide-react";
 
 export const SOURCE_META: Record<
@@ -85,6 +86,15 @@ export const SOURCE_META: Record<
     border: "border-zinc-300/30",
     dot: "bg-zinc-300",
     icon: GitFork,
+  },
+  kaggle: {
+    label: "Kaggle",
+    short: "Kaggle",
+    text: "text-sky-400",
+    bg: "bg-sky-400/10",
+    border: "border-sky-400/30",
+    dot: "bg-sky-400",
+    icon: BarChart3,
   },
 };
 

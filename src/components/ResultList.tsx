@@ -1,9 +1,11 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { AlertCircle, SearchX } from "lucide-react";
 import type { MergedResult } from "@/lib/types";
 import { ResultCard } from "./ResultCard";
 import { Spinner } from "./Spinner";
+import type { SearchMode } from "./ModeToggle";
 
 interface ResultListProps {
   results: MergedResult[];
@@ -12,6 +14,9 @@ interface ResultListProps {
   anyResults: boolean;
   allFailed?: boolean;
   sourceCount?: number;
+  groqAvailable?: boolean;
+  onAiInsightCapReached?: () => void;
+  mode: SearchMode;
 }
 
 export function ResultList({
@@ -21,6 +26,9 @@ export function ResultList({
   anyResults,
   allFailed = false,
   sourceCount = 0,
+  groqAvailable = false,
+  onAiInsightCapReached,
+  mode,
 }: ResultListProps) {
   if (phase === "idle") return null;
 
@@ -60,8 +68,20 @@ export function ResultList({
 
   return (
     <div className="flex flex-col gap-4">
-      {results.map((result) => (
-        <ResultCard key={result.uid} result={result} />
+      {results.map((result, i) => (
+        <motion.div
+          key={result.uid}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25, ease: "easeOut", delay: Math.min(i * 0.04, 0.4) }}
+        >
+          <ResultCard
+            result={result}
+            groqAvailable={groqAvailable}
+            onAiInsightCapReached={onAiInsightCapReached}
+            mode={mode}
+          />
+        </motion.div>
       ))}
     </div>
   );

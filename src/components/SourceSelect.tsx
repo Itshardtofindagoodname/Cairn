@@ -7,21 +7,28 @@ import { SOURCE_META } from "./sourceMeta";
 
 export type SourceScope = "all" | SourceId;
 
-const SCOPES: { value: SourceScope; label: string }[] = [
-  { value: "all", label: "All sources" },
-  ...SOURCE_IDS.map((id) => ({ value: id as SourceScope, label: SOURCE_META[id].label })),
-];
-
 interface SourceSelectProps {
   value: SourceScope;
   onChange: (scope: SourceScope) => void;
+  /** When false, the Kaggle option is hidden (no shared key configured). */
+  kaggleAvailable?: boolean;
 }
 
-export function SourceSelect({ value, onChange }: SourceSelectProps) {
-  const selected = value === "all" ? null : SOURCE_META[value];
+export function SourceSelect({
+  value,
+  onChange,
+  kaggleAvailable = true,
+}: SourceSelectProps) {
+  const scopes = SOURCE_IDS.filter((id) => kaggleAvailable || id !== "kaggle");
+  const effectiveValue =
+    !kaggleAvailable && value === "kaggle" ? "all" : value;
+  const selected = effectiveValue === "all" ? null : SOURCE_META[effectiveValue];
 
   return (
-    <Select.Root value={value} onValueChange={(v) => onChange(v as SourceScope)}>
+    <Select.Root
+      value={effectiveValue}
+      onValueChange={(v) => onChange(v as SourceScope)}
+    >
       <Select.Trigger
         aria-label="Scope search to a single source"
         className="inline-flex h-11 shrink-0 items-center gap-2 rounded-2xl border border-zinc-700/70 bg-zinc-900/70 px-3.5 text-sm font-medium text-zinc-200 shadow-lg shadow-black/30 outline-none transition focus:border-amber-500/60 focus:ring-4 focus:ring-amber-500/10"
@@ -44,20 +51,26 @@ export function SourceSelect({ value, onChange }: SourceSelectProps) {
           className="z-50 min-w-[180px] overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 p-1 shadow-xl shadow-black/40"
         >
           <Select.Viewport>
-            {SCOPES.map((scope) => {
-              const meta = scope.value === "all" ? null : SOURCE_META[scope.value];
+            <Select.Item
+              value="all"
+              className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-zinc-200 outline-none transition select-none data-[highlighted]:bg-zinc-700/70"
+            >
+              <Globe2 className="h-4 w-4 text-amber-400" aria-hidden />
+              <Select.ItemText>All sources</Select.ItemText>
+              <Select.ItemIndicator className="ml-auto">
+                <Check className="h-4 w-4 text-amber-400" aria-hidden />
+              </Select.ItemIndicator>
+            </Select.Item>
+            {scopes.map((id) => {
+              const meta = SOURCE_META[id];
               return (
                 <Select.Item
-                  key={scope.value}
-                  value={scope.value}
+                  key={id}
+                  value={id}
                   className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-zinc-200 outline-none transition select-none data-[highlighted]:bg-zinc-700/70"
                 >
-                  {meta ? (
-                    <meta.icon className={`h-4 w-4 ${meta.text}`} aria-hidden />
-                  ) : (
-                    <Globe2 className="h-4 w-4 text-amber-400" aria-hidden />
-                  )}
-                  <Select.ItemText>{scope.label}</Select.ItemText>
+                  <meta.icon className={`h-4 w-4 ${meta.text}`} aria-hidden />
+                  <Select.ItemText>{meta.label}</Select.ItemText>
                   <Select.ItemIndicator className="ml-auto">
                     <Check className="h-4 w-4 text-amber-400" aria-hidden />
                   </Select.ItemIndicator>

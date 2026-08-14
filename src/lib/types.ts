@@ -6,6 +6,7 @@ export const SOURCE_IDS = [
   "arxiv",
   "semanticscholar",
   "github",
+  "kaggle",
 ] as const;
 
 export type SourceId = (typeof SOURCE_IDS)[number];
@@ -69,7 +70,7 @@ export interface SourceResult {
   /** Copy-pasteable loading code. */
   snippet: string;
   metadata: Record<string, unknown>;
-  /** Author/creator names (used for dedupe + provenance "same-author-as"). */
+  /** Author/creator names (used for dedupe + author-overlap matching). */
   authors?: string[];
   /** ISO date the item was published, if known. */
   publishedAt?: string | null;
@@ -83,8 +84,6 @@ export interface SourceResult {
   doi?: string | null;
   /** arXiv id (bare, e.g. "2103.00112"), when known. */
   arxivId?: string | null;
-  /** Raw README text (GitHub repos only) — feeds entity extraction. */
-  readme?: string | null;
   /** Attached by the ranking engine before results are streamed. */
   rank?: RankBreakdown;
 }
@@ -101,9 +100,10 @@ export interface Origin {
   rank?: RankBreakdown;
   authors?: string[];
   publishedAt?: string | null;
+  updatedAt?: string | null;
+  metadata?: Record<string, unknown>;
   doi?: string | null;
   arxivId?: string | null;
-  readme?: string | null;
   popularity?: number | null;
   popularityLabel?: string | null;
 }
@@ -120,17 +120,36 @@ export interface MergedResult {
   rank?: RankBreakdown;
   authors?: string[];
   publishedAt?: string | null;
+  updatedAt?: string | null;
   doi?: string | null;
   arxivId?: string | null;
-  readme?: string | null;
   popularity?: number | null;
   popularityLabel?: string | null;
 }
 
-export type SourceStatus = "pending" | "streaming" | "ok" | "error" | "rate-limited";
+export type SourceStatus =
+  | "pending"
+  | "streaming"
+  | "ok"
+  | "error"
+  | "rate-limited"
+  | "handoff";
 
 export interface SourceState {
   status: SourceStatus;
   count: number;
   message?: string;
 }
+
+/** Type filter options shown in the result-type chip group. */
+export const TYPE_FILTERS = ["all", "dataset", "model", "paper", "repo"] as const;
+export type TypeFilter = (typeof TYPE_FILTERS)[number];
+
+/** UI label for a result-type filter value. */
+export const TYPE_FILTER_LABELS: Record<TypeFilter, string> = {
+  all: "All",
+  dataset: "Datasets",
+  model: "Models",
+  paper: "Papers",
+  repo: "Code",
+};

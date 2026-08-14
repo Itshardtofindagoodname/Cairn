@@ -1,17 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Database, List, Network } from "lucide-react";
+import { Database } from "lucide-react";
 import { SearchBar } from "./SearchBar";
 import { SourceTracker } from "./SourceTracker";
 import { ResultList } from "./ResultList";
 import { LicenseFilter } from "./LicenseFilter";
-import { GraphView } from "./GraphView";
 import { SourceSelect, type SourceScope } from "./SourceSelect";
+import { ModeToggle, type SearchMode } from "./ModeToggle";
+import { TypeFilter } from "./TypeFilter";
+import { InterpretChip } from "./InterpretChip";
+import { KaggleConnectDialog } from "./KaggleConnectDialog";
 import { mergeResults } from "@/lib/merge";
-import { buildProvenanceGraph } from "@/lib/graph";
 import { isCommerciallyUsable } from "@/lib/license";
-import { SOURCE_IDS, type SourceId, type SourceResult, type SourceState } from "@/lib/types";
+import { streamSearch } from "@/lib/sse-client";
+import { loadKaggleCredentials } from "@/lib/kaggle-store";
+import {
+  SOURCE_IDS,
+  TYPE_FILTERS,
+  TYPE_FILTER_LABELS,
+  type SourceId,
+  type SourceResult,
+  type SourceState,
+  type TypeFilter as TypeFilterValue,
+} from "@/lib/types";
 
 function emptyResults(): Record<SourceId, SourceResult[]> {
   return Object.fromEntries(
@@ -35,7 +47,11 @@ const EXAMPLES = [
 ];
 
 type Phase = "idle" | "streaming" | "done";
-type ViewMode = "list" | "graph";
+
+interface ExpansionInfo {
+  terms: string[];
+  explanation: string;
+}
 
 function readSourceScope(url: URL): SourceScope {
   const raw = url.searchParams.get("source");
@@ -48,6 +64,7 @@ function readQuery(url: URL): string {
 }
 
 export function SearchApp() {
+  const [inputValue, setInputValue] = useState("");
   const [query, setQuery] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [results, setResults] = useState<Record<SourceId, SourceResult[]>>(emptyResults);
@@ -58,101 +75,206 @@ export function SearchApp() {
       ? "all"
       : readSourceScope(new URL(window.location.href)),
   );
-  const [view, setView] = useState<ViewMode>("list");
-  const esRef = useRef<EventSource | null>(null);
-  const doneRef = useRef(false);
+  const [typeFilter, setTypeFilter] = useState<TypeFilterValue>(() => {
+    if (typeof window === "undefined") return "all";
+    const raw = new URL(window.location.href).searchParams.get("type");
+    if (raw && (TYPE_FILTERS as readonly string[]).includes(raw)) return raw as TypeFilterValue;
+    return "all";
+  });
+  const [mode, setMode] = useState<SearchMode>(() => {
+    if (typeof window === "undefined") return "basic";
+    return new URL(window.location.href).searchParams.get("mode") === "discuss"
+      ? "discuss"
+      : "basic";
+  });
+  const [expansion, setExpansion] = useState<ExpansionInfo | null>(null);
+  const [expansionDismissed, setExpansionDismissed] = useState(false);
+  const [kaggleCreds, setKaggleCreds] = useState<{ username: string; key: string } | null>(null);
+  const [kaggleConnectOpen, setKaggleConnectOpen] = useState(false);
+  const [config, setConfig] = useState<{
+    kaggleAvailable: boolean;
+    groqAvailable: boolean;
+    aiInsightDailyCap: number;
+  }>({ kaggleAvailable: false, groqAvailable: false, aiInsightDailyCap: 0 });
+  const [insightCapReached, setInsightCapReached] = useState(false);
+
+  // ---- refs mirroring state so runSearch (stable, empty deps) always reads
+  // the latest values without stale closures.
+  const abortRef = useRef<AbortController | null>(null);
+  const committedRef = useRef("");
+  const scopeRef = useRef(scope);
+  const typeRef = useRef(typeFilter);
+  const modeRef = useRef(mode);
+  const credsRef = useRef(kaggleCreds);
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    scopeRef.current = scope;
+  }, [scope]);
+  useEffect(() => {
+    typeRef.current = typeFilter;
+  }, [typeFilter]);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+  useEffect(() => {
+    credsRef.current = kaggleCreds;
+  }, [kaggleCreds]);
 
   const activeSources = useMemo<SourceId[]>(
     () => (scope === "all" ? [...SOURCE_IDS] : [scope]),
     [scope],
   );
 
-  // Restore a shareable search from the URL on first mount (?q=…&source=…).
-  const initializedRef = useRef(false);
-
-  const runSearch = useCallback(
-    (raw: string) => {
-      const q = raw.trim();
-      if (!q) return;
-
-      esRef.current?.close();
-      doneRef.current = false;
-      setQuery(q);
-      setPhase("streaming");
+  const runSearch = useCallback((raw: string, opts?: { fresh?: boolean }) => {
+    const q = raw.trim().slice(0, 120);
+    if (!q) {
+      // Empty-query guard: never launch a search for nothing (fixes the
+      // infinite-loop edge case when the query field is cleared).
+      committedRef.current = "";
+      setQuery("");
+      setPhase("idle");
       setResults(emptyResults());
       setStates(initialStates());
-
-      // Persist the search (and provider scope) in the URL so it's shareable.
+      setExpansion(null);
+      // The Clear button empties the URL too, so a refreshed tab starts clean.
       const url = new URL(window.location.href);
-      url.searchParams.set("q", q);
-      if (scope === "all") url.searchParams.delete("source");
-      else url.searchParams.set("source", scope);
+      url.searchParams.delete("q");
+      url.searchParams.delete("source");
+      url.searchParams.delete("type");
+      url.searchParams.delete("mode");
       window.history.replaceState(null, "", url.toString());
+      return;
+    }
 
-      const es = new EventSource(
-        scope === "all"
-          ? `/api/search?q=${encodeURIComponent(q)}`
-          : `/api/search?q=${encodeURIComponent(q)}&source=${encodeURIComponent(scope)}`,
-      );
-      esRef.current = es;
+    abortRef.current?.abort();
+    committedRef.current = q;
+    setInputValue(q);
+    setQuery(q);
+    setPhase("streaming");
+    setResults(emptyResults());
+    setStates(initialStates());
+    setExpansion(null);
+    setExpansionDismissed(false);
+    setInsightCapReached(false);
 
-      es.addEventListener("source-status", (event) => {
-        const d = JSON.parse((event as MessageEvent).data) as {
-          source: SourceId;
-          status: SourceState["status"];
-          count?: number;
-          message?: string;
-        };
-        setStates((prev) => ({
-          ...prev,
-          [d.source]: {
-            status: d.status,
-            count: d.count ?? 0,
-            message: d.message,
-          },
-        }));
-      });
+    const scopeNow = scopeRef.current;
+    const typeNow = typeRef.current;
+    const modeNow = modeRef.current;
+    const credsNow = credsRef.current;
+    const discuss = modeNow === "discuss";
 
-      es.addEventListener("source-result", (event) => {
-        const d = JSON.parse((event as MessageEvent).data) as {
-          source: SourceId;
-          results: SourceResult[];
-        };
-        setResults((prev) => ({ ...prev, [d.source]: d.results }));
-      });
+    // Persist the search (query, provider scope, type filter, mode) in the URL
+    // so it's shareable and restorable on load.
+    const url = new URL(window.location.href);
+    url.searchParams.set("q", q);
+    if (scopeNow === "all") url.searchParams.delete("source");
+    else url.searchParams.set("source", scopeNow);
+    if (typeNow === "all") url.searchParams.delete("type");
+    else url.searchParams.set("type", typeNow);
+    if (discuss) url.searchParams.set("mode", "discuss");
+    else url.searchParams.delete("mode");
+    window.history.replaceState(null, "", url.toString());
 
-      es.addEventListener("done", () => {
-        doneRef.current = true;
-        setPhase("done");
-        es.close();
-        esRef.current = null;
-      });
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      es.addEventListener("error", () => {
-        if (!doneRef.current) {
-          setPhase("done");
-          es.close();
-          esRef.current = null;
-        }
-      });
-    },
-    [scope],
-  );
+    const headers: Record<string, string> = {};
+    if (credsNow?.username) headers["x-cairn-kaggle-username"] = credsNow.username;
+    if (credsNow?.key) headers["x-cairn-kaggle-key"] = credsNow.key;
 
-  // Restore a shareable search from the URL on first mount (?q=…&source=…).
+    void streamSearch(
+      "/api/search",
+      {
+        headers,
+        body: {
+          q,
+          ...(scopeNow === "all" ? {} : { source: scopeNow }),
+          type: typeNow,
+          expand: discuss,
+          fresh: opts?.fresh ?? false,
+        },
+      },
+      {
+        onEvent: (event, data) => {
+          if (controller.signal.aborted) return;
+          if (event === "source-status") {
+            const d = data as {
+              source: SourceId;
+              status: SourceState["status"];
+              count?: number;
+              message?: string;
+            };
+            setStates((prev) => ({
+              ...prev,
+              [d.source]: {
+                status: d.status,
+                count: d.count ?? 0,
+                message: d.message,
+              },
+            }));
+          } else if (event === "source-result") {
+            const d = data as { source: SourceId; results: SourceResult[] };
+            setResults((prev) => ({ ...prev, [d.source]: d.results }));
+          } else if (event === "expansion") {
+            const d = data as ExpansionInfo;
+            if (d.terms.length > 1) setExpansion(d);
+          } else if (event === "done") {
+            setPhase("done");
+          } else if (event === "error") {
+            setPhase("done");
+          }
+        },
+        onEnd: () => {
+          if (!controller.signal.aborted) setPhase("done");
+        },
+      },
+    );
+  }, []);
+
+  // Live re-trigger: changing the provider scope OR the result-type filter
+  // re-runs the search with the SAME committed query (this was the bug —
+  // filters didn't re-run the query at all).
+  useEffect(() => {
+    if (!initializedRef.current) return;
+    const q = committedRef.current;
+    if (q) runSearch(q);
+  }, [scope, typeFilter, runSearch]);
+
+  // Load server capability flags (Kaggle shared key / Groq availability).
+  useEffect(() => {
+    fetch("/api/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setConfig(d);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Restore a shareable search from the URL on first mount (?q=…&source=…&type=…).
+  // The user's stored Kaggle key loads BEFORE the search so a restored search
+  // never fires without the personal creds (they load asynchronously, so the
+  // old code raced the restore against the IndexedDB read and sent no key).
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
-    const url = new URL(window.location.href);
-    const initialQuery = readQuery(url);
-    // Mount-time restore from a shareable URL is an intentional one-shot init.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (initialQuery) runSearch(initialQuery);
+    const initialQuery = readQuery(new URL(window.location.href));
+    void (async () => {
+      let creds: { username: string; key: string } | null = null;
+      try {
+        creds = await loadKaggleCredentials();
+      } catch {
+        creds = null;
+      }
+      credsRef.current = creds;
+      setKaggleCreds(creds);
+      if (initialQuery) runSearch(initialQuery);
+    })();
   }, [runSearch]);
 
   useEffect(
     () => () => {
-      esRef.current?.close();
+      abortRef.current?.abort();
     },
     [],
   );
@@ -170,7 +292,6 @@ export function SearchApp() {
         : merged,
     [merged, commercialOnly],
   );
-  const graph = useMemo(() => buildProvenanceGraph(filtered), [filtered]);
   const anyResults = useMemo(
     () => activeSources.some((s) => results[s].length > 0),
     [results, activeSources],
@@ -187,6 +308,20 @@ export function SearchApp() {
     [phase, anyResults, states, activeSources],
   );
 
+  const handleCredentialsChanged = useCallback(() => {
+    loadKaggleCredentials()
+      .then((creds) => {
+        // Sync the ref synchronously BEFORE the re-run: runSearch reads
+        // credsRef.current inline, and the [kaggleCreds] effect only syncs it
+        // after a re-render. Without this the post-connect re-search sends the
+        // PREVIOUS (possibly revoked) key and Kaggle answers 401.
+        credsRef.current = creds;
+        setKaggleCreds(creds);
+        if (creds && committedRef.current) runSearch(committedRef.current);
+      })
+      .catch(() => {});
+  }, [runSearch]);
+
   return (
     <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col px-4 pb-20">
       <header className="pt-16 pb-8 text-center">
@@ -194,20 +329,47 @@ export function SearchApp() {
           <Database className="h-6 w-6 text-amber-400" aria-hidden />
         </div>
         <h1 className="text-4xl font-extrabold tracking-tight text-zinc-50 sm:text-5xl">
-          DataForge
+          Cairn
         </h1>
         <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
           One query across Hugging Face, arXiv, GitHub, Zenodo, Semantic
-          Scholar, data.gov &amp; OpenML — datasets, papers and models stream in
-          live, ranked, and stitched into a provenance graph.
+          Scholar, data.gov, OpenML &amp; Kaggle — datasets, papers, models and
+          code stream in live, ranked by a transparent Reproducibility Score.
         </p>
       </header>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="flex-1">
-          <SearchBar onSubmit={runSearch} disabled={phase === "streaming"} />
+          <SearchBar
+            value={inputValue}
+            onChange={setInputValue}
+            onSubmit={runSearch}
+            disabled={phase === "streaming"}
+          />
         </div>
-        <SourceSelect value={scope} onChange={setScope} />
+        <div className="flex flex-wrap items-center gap-2">
+          <SourceSelect
+            value={scope}
+            onChange={setScope}
+            kaggleAvailable={config.kaggleAvailable}
+          />
+          <ModeToggle value={mode} onChange={setMode} />
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <TypeFilter value={typeFilter} onChange={setTypeFilter} />
+        <LicenseFilter
+          commercialOnly={commercialOnly}
+          onChange={setCommercialOnly}
+          shown={filtered.length}
+          total={totalRaw}
+        />
+        {config.groqAvailable && mode === "discuss" && (
+          <span className="ml-auto hidden text-xs text-zinc-500 sm:inline">
+            Discuss mode expands your query via AI for richer coverage.
+          </span>
+        )}
       </div>
 
       {phase === "idle" && (
@@ -232,56 +394,49 @@ export function SearchApp() {
 
       {phase !== "idle" && (
         <div className="mt-6 space-y-4">
-          <SourceTracker states={states} sources={activeSources} />
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <LicenseFilter
-              commercialOnly={commercialOnly}
-              onChange={setCommercialOnly}
-              shown={filtered.length}
-              total={totalRaw}
-            />
-            <div className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/60 p-1">
-              <button
-                type="button"
-                onClick={() => setView("list")}
-                aria-pressed={view === "list"}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                  view === "list"
-                    ? "bg-zinc-700 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <List className="h-3.5 w-3.5" aria-hidden /> List
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("graph")}
-                aria-pressed={view === "graph"}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
-                  view === "graph"
-                    ? "bg-zinc-700 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <Network className="h-3.5 w-3.5" aria-hidden /> Graph
-              </button>
-            </div>
-          </div>
-
-          {view === "graph" ? (
-            <GraphView graph={graph} />
-          ) : (
-            <ResultList
-              results={filtered}
-              phase={phase}
-              query={query}
-              anyResults={anyResults}
-              allFailed={allFailed}
-              sourceCount={activeSources.length}
+          {expansion && !expansionDismissed && mode === "discuss" && (
+            <InterpretChip
+              terms={expansion.terms}
+              explanation={expansion.explanation}
+              onDismiss={() => setExpansionDismissed(true)}
+              onReinterpret={() => runSearch(committedRef.current, { fresh: true })}
+              disabled={phase === "streaming"}
             />
           )}
+
+          <SourceTracker
+            states={states}
+            sources={activeSources}
+            onConnectKaggle={() => setKaggleConnectOpen(true)}
+          />
+
+          {insightCapReached && (
+            <div className="rounded-xl border border-zinc-700 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400">
+              Daily AI insight limit reached for {TYPE_FILTER_LABELS[typeFilter]} results —
+              insights are capped per day on the free tier. Come back tomorrow.
+            </div>
+          )}
+
+          <ResultList
+            results={filtered}
+            phase={phase}
+            query={query}
+            anyResults={anyResults}
+            allFailed={allFailed}
+            sourceCount={activeSources.length}
+            groqAvailable={config.groqAvailable}
+            onAiInsightCapReached={() => setInsightCapReached(true)}
+            mode={mode}
+          />
         </div>
       )}
+
+      <KaggleConnectDialog
+        open={kaggleConnectOpen}
+        onOpenChange={setKaggleConnectOpen}
+        connectedUsername={kaggleCreds?.username ?? null}
+        onCredentialsChanged={handleCredentialsChanged}
+      />
     </div>
   );
 }

@@ -14,11 +14,13 @@ let db: Database.Database | null = null;
 function getDb(): Database.Database {
   if (db) return db;
   const isVercel = process.env.VERCEL === "1";
-  const dir = isVercel
-    ? "/tmp"
-    : path.join(process.cwd(), ".dataforge");
+  const file =
+    process.env.CAIRN_CACHE_PATH ??
+    process.env.DATAFORGE_CACHE_PATH ??
+    path.join(process.cwd(), ".cairn", "cache.db");
+  const dir = path.dirname(file);
   if (!isVercel && !existsSync(dir)) mkdirSync(dir, { recursive: true });
-  db = new Database(path.join(dir, "cache.db"));
+  db = new Database(file);
   db.exec(`
     CREATE TABLE IF NOT EXISTS cache (
       key TEXT PRIMARY KEY,

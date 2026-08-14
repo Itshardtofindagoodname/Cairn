@@ -23,7 +23,7 @@ async function fetchRaw(
   try {
     return await fetch(url, {
       headers: {
-        "User-Agent": "DataForge/1.0 (+https://github.com/dataforge)",
+        "User-Agent": "Cairn/1.0 (+https://github.com/cairn)",
         Accept: "application/json, text/plain;q=0.8, */*;q=0.2",
         ...headers,
       },

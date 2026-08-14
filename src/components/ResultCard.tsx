@@ -12,6 +12,9 @@ import {
 import { PreviewPanel } from "./PreviewPanel";
 import { CodeBlock } from "./CodeBlock";
 import { ScorePopover } from "./ScorePopover";
+import { ReproScoreBadge } from "./ReproScoreBadge";
+import { AiInsightPanel } from "./AiInsightPanel";
+import type { SearchMode } from "./ModeToggle";
 
 function SourceBadge({ source }: { source: Origin["source"] }) {
   const meta = SOURCE_META[source];
@@ -71,7 +74,17 @@ function CodeSnippetPanel({ origins }: { origins: Origin[] }) {
   );
 }
 
-export function ResultCard({ result }: { result: MergedResult }) {
+export function ResultCard({
+  result,
+  groqAvailable,
+  onAiInsightCapReached,
+  mode,
+}: {
+  result: MergedResult;
+  groqAvailable?: boolean;
+  onAiInsightCapReached?: () => void;
+  mode: SearchMode;
+}) {
   const [panel, setPanel] = useState<null | "preview" | "code">(null);
   const primary = result.origins[0];
   const typeMeta = TYPE_META[result.type];
@@ -159,6 +172,7 @@ export function ResultCard({ result }: { result: MergedResult }) {
           </span>
         )}
         {result.rank && <ScorePopover rank={result.rank} />}
+        <ReproScoreBadge result={result} />
         {typeof primary.sourceId === "string" && (
           <span className="hidden max-w-[160px] truncate rounded-md bg-zinc-800/80 px-2 py-0.5 font-mono text-[11px] sm:inline">
             {primary.sourceId}
@@ -223,6 +237,19 @@ export function ResultCard({ result }: { result: MergedResult }) {
       {panel === "code" && (
         <div className="mt-3">
           <CodeSnippetPanel origins={result.origins} />
+        </div>
+      )}
+
+      {/* AI Insight is a Discuss-mode feature. In Basic mode the panel never
+          mounts — no request fires, no AI UI is rendered, even though Groq
+          may be available server-side. */}
+      {mode === "discuss" && groqAvailable && (
+        <div className="mt-3">
+          <AiInsightPanel
+            result={result}
+            enabled={groqAvailable}
+            onReachedCap={onAiInsightCapReached ?? (() => {})}
+          />
         </div>
       )}
     </article>

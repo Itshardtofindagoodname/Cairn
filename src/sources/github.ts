@@ -8,23 +8,16 @@ import { SourceRateLimitedError } from "./types";
 /**
  * GitHub REST API (https://docs.github.com/en/rest/search).
  *
- * Anonymous: 60 requests/hr. With GITHUB_TOKEN: 5,000/hr. The app must work
+* Anonymous: 60 requests/hr. With GITHUB_TOKEN: 5,000/hr. The app must work
  * fully anonymously, so we use the token only when present. When the
  * anonymous budget is exhausted we surface a visible "rate-limited" state
  * instead of failing silently.
- *
- * The README is fetched (best-effort) for entity extraction — it's the only
- * real "code-adjacent" text GitHub search gives us, and it's how the
- * provenance graph can tie a repo to a dataset/model it implements.
  */
 
 const SEARCH_API = (q: string, limit: number) =>
   `https://api.github.com/search/repositories?q=${encodeURIComponent(
     q,
   )}&per_page=${limit}&sort=stars&order=desc`;
-
-const README_API = (fullName: string) =>
-  `https://api.github.com/repos/${fullName}/readme`;
 
 function authHeaders(): Record<string, string> {
   const token = process.env.GITHUB_TOKEN;
@@ -72,10 +65,6 @@ export const github: SourceAdapter = {
 
       const fullName = repo.full_name;
       const stars = repo.stargazers_count ?? 0;
-      let readme: string | null = null;
-      if (process.env.GITHUB_TOKEN || results.length < 3) {
-        readme = await fetchReadme(fullName, signal).catch(() => null);
-      }
 
       const license = normalizeLicense(repo.license?.spdx_id ?? repo.license?.name);
       const topics = (repo.topics ?? []).slice(0, 5);
@@ -117,7 +106,6 @@ export const github: SourceAdapter = {
         updatedAt: repo.updated_at ?? null,
         popularity: stars,
         popularityLabel: stars ? `${formatCount(stars)} stars` : null,
-        readme,
       });
     }
     return results;
@@ -164,39 +152,6 @@ async function fetchWithRateLimit<T>(
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as T;
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", onAbort);
-  }
-}
-
-/** Best-effort raw README fetch; never fatal. Raw markdown text. */
-async function fetchReadme(
-  fullName: string,
-  signal?: AbortSignal,
-): Promise<string | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
-  const onAbort = () => controller.abort();
-  if (signal) {
-    if (signal.aborted) controller.abort();
-    else signal.addEventListener("abort", onAbort, { once: true });
-  }
-  try {
-    const headers: Record<string, string> = {
-      Accept: "application/vnd.github.raw+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    };
-    const token = process.env.GITHUB_TOKEN;
-    if (token) headers.Authorization = `Bearer ${token}`;
-
-    const res = await fetch(README_API(fullName), { headers, signal: controller.signal, cache: "no-store" });
-    if (res.status === 403 || res.status === 429) return null;
-    if (!res.ok) return null;
-    const text = await res.text();
-    return text.slice(0, 20_000);
-  } catch {
-    return null;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);

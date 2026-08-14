@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
       res = await fetch(rawUrl, {
         headers: {
           Range: "bytes=0-" + (MAX_BYTES - 1),
-          "User-Agent": "DataForge/1.0",
+          "User-Agent": "Cairn/1.0",
           Accept: "*/*",
         },
         signal: controller.signal,

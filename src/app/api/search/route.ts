@@ -1,12 +1,25 @@
 import type { NextRequest } from "next/server";
 import { cacheGet, cacheSet } from "@/lib/cache";
 import { rankBatch } from "@/lib/ranking";
-import { SOURCES, SourceRateLimitedError, type SourceAdapter } from "@/sources";
-import type { SourceId, SourceResult } from "@/lib/types";
+import { searchLru } from "@/lib/lru-cache";
+import { expandQuery } from "@/lib/intent";
+import {
+  SOURCES,
+  SourceRateLimitedError,
+  SourceHandoffError,
+  type SourceAdapter,
+} from "@/sources";
+import {
+  TYPE_FILTERS,
+  type SourceId,
+  type SourceResult,
+  type TypeFilter,
+} from "@/lib/types";
+import type { SourceAuthContext } from "@/sources/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 45;
 
 const encoder = new TextEncoder();
 
@@ -14,44 +27,84 @@ function sse(event: string, data: unknown): Uint8Array {
   return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-/**
- * GET /api/search?q=...&source=... — SSE stream.
- *
- * Fans out to every source in parallel and pushes each source's normalized,
- * RANKED results as they arrive. Ranking is a per-batch streaming post-process
- * (each batch is scored the moment it's ready), never a final blocking step.
- *
- * `source` (optional): scope to a single source (e.g. ?source=arxiv). When set,
- * the OTHER sources are not even fetched — a real latency win, not a
- * fetch-then-hide filter.
- */
-export async function GET(request: NextRequest) {
+const sseHeaders: Record<string, string> = {
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache, no-transform",
+  "X-Accel-Buffering": "no",
+  Connection: "keep-alive",
+};
+
+interface SearchRequest {
+  q?: string;
+  source?: string;
+  type?: string;
+  expand?: boolean;
+  fresh?: boolean;
+  kaggle?: { username?: string; key?: string } | null;
+}
+
+function validType(raw: string | undefined | null): TypeFilter {
+  if (raw && (TYPE_FILTERS as readonly string[]).includes(raw)) {
+    return raw as TypeFilter;
+  }
+  return "all";
+}
+
+async function parseRequest(request: NextRequest): Promise<SearchRequest> {
   const params = request.nextUrl.searchParams;
-  const q = (params.get("q") ?? "").trim().slice(0, 120);
-  const sourceParam = (params.get("source") ?? "").trim().toLowerCase();
+  let body: Partial<SearchRequest> = {};
+  if (request.method === "POST") {
+    body = (await request.json().catch(() => ({}))) as Partial<SearchRequest>;
+  }
+  const kaggleUsername =
+    body.kaggle?.username?.trim() || request.headers.get("x-cairn-kaggle-username")?.trim();
+  const kaggleKey =
+    body.kaggle?.key?.trim() || request.headers.get("x-cairn-kaggle-key")?.trim();
+  return {
+    q: (body.q ?? params.get("q") ?? "").toString().trim().slice(0, 120),
+    source: (body.source ?? params.get("source") ?? "")
+      .toString()
+      .trim()
+      .toLowerCase(),
+    type: (body.type ?? params.get("type") ?? "all").toString().trim().toLowerCase(),
+    expand: body.expand === true || params.get("expand") === "1",
+    fresh: body.fresh === true || params.get("fresh") === "1",
+    kaggle:
+      kaggleUsername && kaggleKey
+        ? { username: kaggleUsername, key: kaggleKey }
+        : null,
+  };
+}
+
+async function handle(request: NextRequest) {
+  const { q, source: sourceParam, type: typeParam, expand, fresh, kaggle } =
+    await parseRequest(request);
+  const typeFilter = validType(typeParam);
 
   if (!q) {
-    return new Response(sse("error", { message: "Missing query" }) as unknown as BodyInit, {
-      headers: { "Content-Type": "text/event-stream" },
-    });
+    return new Response(
+      sse("error", { message: "Missing query" }) as unknown as BodyInit,
+      { headers: sseHeaders },
+    );
   }
 
   const activeSources = sourceParam
     ? SOURCES.filter((s) => s.id === sourceParam)
     : SOURCES;
   if (activeSources.length === 0) {
-    return new Response(sse("error", { message: `Unknown source: ${sourceParam}` }) as unknown as BodyInit, {
-      headers: { "Content-Type": "text/event-stream" },
-    });
+    return new Response(
+      sse("error", { message: `Unknown source: ${sourceParam}` }) as unknown as BodyInit,
+      { headers: sseHeaders },
+    );
   }
 
+  const auth: SourceAuthContext = { kaggle };
   const overall = new AbortController();
-  let closed = false;
-  let finished = false;
 
   const underlyingSource: UnderlyingDefaultSource = {
     start(controller) {
-      const pending = new Set<SourceId>(activeSources.map((s) => s.id));
+      let closed = false;
+      let finished = false;
 
       const push = (event: string, data: unknown) => {
         if (!closed) {
@@ -66,7 +119,6 @@ export async function GET(request: NextRequest) {
       const finish = () => {
         if (finished) return;
         finished = true;
-        push("done", { sources: [...pending] });
         closed = true;
         try {
           controller.close();
@@ -75,77 +127,120 @@ export async function GET(request: NextRequest) {
         }
       };
 
-      const runSource = async (adapter: SourceAdapter) => {
-        try {
-          const cacheKey = `${adapter.id}:${q.toLowerCase()}`;
-          let results: SourceResult[] | null = null;
-          const cached = cacheGet(cacheKey);
-          if (cached) {
-            results = JSON.parse(cached) as SourceResult[];
-          } else {
-            results = await adapter.search(q, overall.signal);
-            cacheSet(cacheKey, JSON.stringify(results));
+      void (async () => {
+        const signal = overall.signal;
+
+        // Kick off intent expansion in parallel with the term-0 fan-out so a
+        // Groq round-trip never delays the first results.
+        const expansionPromise = expand
+          ? expandQuery(q, { signal, fresh })
+          : Promise.resolve(null);
+
+        // Accumulate per-source across every expansion term; the client gets a
+        // single source-result at the end (dedupe/merge runs client-side).
+        const accumulated = new Map<SourceId, SourceResult[]>();
+
+        const runSource = async (adapter: SourceAdapter, term: string, isFirst: boolean) => {
+          if (signal.aborted) return;
+          try {
+            const cacheKey = `${adapter.id}:${term.toLowerCase()}:${typeFilter}`;
+            let results = searchLru.get(cacheKey) as SourceResult[] | undefined;
+            if (!results) {
+              const sqlite = cacheGet(cacheKey);
+              if (sqlite) {
+                results = JSON.parse(sqlite) as SourceResult[];
+              } else {
+                results = await adapter.search(term, signal, auth);
+                cacheSet(cacheKey, JSON.stringify(results));
+              }
+              searchLru.set(cacheKey, results);
+            }
+            // Server-side result-type filter (AND-combined with provider scope).
+            const filtered =
+              typeFilter === "all"
+                ? results
+                : results.filter((r) => r.type === typeFilter);
+            accumulated.set(adapter.id, [
+              ...(accumulated.get(adapter.id) ?? []),
+              ...filtered,
+            ]);
+            if (isFirst) {
+              const ranked = rankBatch(term, filtered);
+              push("source-status", {
+                source: adapter.id,
+                status: "ok",
+                count: ranked.length,
+              });
+            }
+          } catch (err) {
+            if (signal.aborted) return;
+            if (!isFirst) return; // failures on expansion terms are silent
+            if (err instanceof SourceRateLimitedError) {
+              push("source-status", {
+                source: adapter.id,
+                status: "rate-limited",
+                message: err.message,
+                count: 0,
+              });
+            } else if (err instanceof SourceHandoffError) {
+              push("source-status", {
+                source: adapter.id,
+                status: "handoff",
+                message: err.message,
+                count: 0,
+              });
+            } else {
+              push("source-status", {
+                source: adapter.id,
+                status: "error",
+                message: err instanceof Error ? err.message : "Unknown error",
+                count: 0,
+              });
+            }
           }
+        };
 
-          // Streaming post-process: rank this batch before pushing it.
-          const ranked = rankBatch(q, results);
+        // Term 0 = the user's literal query, always.
+        await Promise.allSettled(activeSources.map((s) => runSource(s, q, true)));
 
-          push("source-status", {
-            source: adapter.id,
-            status: "ok",
-            count: ranked.length,
+        // Then any intent expansion, if Groq answered (silent fallback otherwise).
+        const expansion = await expansionPromise;
+        if (expansion && expansion.terms.length > 1 && !signal.aborted) {
+          push("expansion", {
+            terms: expansion.terms,
+            explanation: expansion.explanation,
           });
-          push("source-result", { source: adapter.id, results: ranked });
-        } catch (err) {
-          if (overall.signal.aborted) return;
-          if (err instanceof SourceRateLimitedError) {
-            push("source-status", {
-              source: adapter.id,
-              status: "rate-limited",
-              message: err.message,
-              count: 0,
-            });
-          } else {
-            const message =
-              err instanceof Error ? err.message : "Unknown error";
-            push("source-status", {
-              source: adapter.id,
-              status: "error",
-              message,
-              count: 0,
-            });
+          for (const term of expansion.terms.slice(1)) {
+            if (signal.aborted) break;
+            await Promise.allSettled(activeSources.map((s) => runSource(s, term, false)));
           }
-        } finally {
-          pending.delete(adapter.id);
-          if (pending.size === 0) finish();
         }
-      };
 
-      void Promise.allSettled(activeSources.map((adapter) => runSource(adapter))).then(
-        () => {
-          // Safety net: never leave the stream hanging if a bug slipped through.
-          setTimeout(() => {
-            if (!finished) finish();
-          }, 2000);
-        },
-      );
+        // Emit each source's combined, ranked results.
+        for (const adapter of activeSources) {
+          if (signal.aborted) return;
+          const all = accumulated.get(adapter.id) ?? [];
+          if (all.length === 0) continue;
+          push("source-result", { source: adapter.id, results: rankBatch(q, all) });
+        }
+
+        push("done", { sources: activeSources.map((s) => s.id) });
+        finish();
+      })().catch(() => finish());
     },
     cancel() {
-      // Browser disconnected — stop all upstream work.
       overall.abort();
-      closed = true;
-      finished = true;
     },
   };
 
   const stream = new ReadableStream(underlyingSource);
+  return new Response(stream, { headers: sseHeaders });
+}
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      "X-Accel-Buffering": "no",
-      Connection: "keep-alive",
-    },
-  });
+export async function GET(request: NextRequest) {
+  return handle(request);
+}
+
+export async function POST(request: NextRequest) {
+  return handle(request);
 }
