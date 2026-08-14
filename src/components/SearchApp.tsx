@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Database } from "lucide-react";
 import { SearchBar } from "./SearchBar";
-import { SourceTracker } from "./SourceTracker";
 import { ResultList } from "./ResultList";
 import { LicenseFilter } from "./LicenseFilter";
 import { SourceSelect, type SourceScope } from "./SourceSelect";
@@ -154,12 +153,11 @@ export function SearchApp() {
     }
 
     abortRef.current?.abort();
+    const isRerun = q === committedRef.current;
     committedRef.current = q;
     setInputValue(q);
     setQuery(q);
     setPhase("streaming");
-    setResults(emptyResults());
-    setStates(initialStates());
     setExpansion(null);
     setExpansionDismissed(false);
     setInsightCapReached(false);
@@ -169,6 +167,22 @@ export function SearchApp() {
     const modeNow = modeRef.current;
     const credsNow = credsRef.current;
     const discuss = modeNow === "discuss";
+    const activeNow = scopeNow === "all" ? [...SOURCE_IDS] : [scopeNow];
+
+    // Reset the sources about to be (re-)searched. Re-runs of the SAME query
+    // (scope / type-filter changes) keep the already-fetched status + counts of
+    // sources outside the new scope, so the dropdown doesn't spin them again.
+    const touched = isRerun ? activeNow : SOURCE_IDS;
+    setResults((prev) => {
+      const next = { ...prev };
+      for (const id of touched) next[id] = [];
+      return next;
+    });
+    setStates((prev) => {
+      const next = { ...prev };
+      for (const id of touched) next[id] = { status: "pending", count: 0 };
+      return next;
+    });
 
     // Persist the search (query, provider scope, type filter, mode) in the URL
     // so it's shareable and restorable on load.
@@ -374,6 +388,9 @@ export function SearchApp() {
             value={scope}
             onChange={setScope}
             kaggleAvailable={config.kaggleAvailable}
+            states={states}
+            active={phase !== "idle"}
+            onConnectKaggle={() => setKaggleConnectOpen(true)}
           />
           <ModeToggle value={mode} onChange={setMode} />
         </div>
@@ -425,12 +442,6 @@ export function SearchApp() {
               disabled={phase === "streaming"}
             />
           )}
-
-          <SourceTracker
-            states={states}
-            sources={activeSources}
-            onConnectKaggle={() => setKaggleConnectOpen(true)}
-          />
 
           {insightCapReached && (
             <div className="rounded-xl border border-zinc-700 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400">

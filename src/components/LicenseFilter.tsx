@@ -17,8 +17,11 @@ export function LicenseFilter({
   total,
 }: LicenseFilterProps) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 pb-3">
-      <label className="flex cursor-pointer items-center gap-2.5 select-none">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <label
+        title="MIT · Apache-2.0 · CC-BY · Public Domain"
+        className="flex cursor-pointer items-center gap-2.5 select-none"
+      >
         <Switch.Root
           checked={commercialOnly}
           onCheckedChange={onChange}
@@ -35,9 +38,6 @@ export function LicenseFilter({
         <span className="flex items-center gap-1.5 text-sm text-zinc-300">
           <ShieldCheck className="h-4 w-4 text-emerald-400" aria-hidden />
           Commercially usable only
-        </span>
-        <span className="hidden text-xs text-zinc-500 sm:inline">
-          MIT · Apache-2.0 · CC-BY · Public Domain
         </span>
       </label>
       <span className="text-xs text-zinc-500">
