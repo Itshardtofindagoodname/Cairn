@@ -31,8 +31,6 @@ export function buildSnippet(ctx: SnippetContext): string {
         : openmlSnippet(ctx.metadata.did);
     case "arxiv":
       return arxivSnippet(ctx.sourceId);
-    case "semanticscholar":
-      return semanticScholarSnippet(ctx.sourceId);
     case "github":
       return githubSnippet(ctx.sourceId);
     case "kaggle":
@@ -116,18 +114,6 @@ function arxivSnippet(arxivId: string): string {
 curl -L "https://arxiv.org/pdf/${arxivId}.pdf" -o ${arxivId}.pdf
 # view the abstract page:
 # https://arxiv.org/abs/${arxivId}`;
-}
-
-function semanticScholarSnippet(paperId: string): string {
-  return `# pip install requests
-import requests
-
-r = requests.get(
-    "https://api.semanticscholar.org/graph/v1/paper/${paperId}",
-    params={"fields": "title,abstract,citationCount,year"},
-)
-paper = r.json()
-print(paper["title"], paper["citationCount"])`;
 }
 
 function githubSnippet(repoPath: string): string {

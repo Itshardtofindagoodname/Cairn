@@ -5,7 +5,6 @@ import {
   Database,
   FileText,
   GitFork,
-  GraduationCap,
   Landmark,
   Cpu,
   FlaskConical,
@@ -68,15 +67,6 @@ export const SOURCE_META: Record<
     border: "border-red-400/30",
     dot: "bg-red-400",
     icon: FileText,
-  },
-  semanticscholar: {
-    label: "Semantic Scholar",
-    short: "S2",
-    text: "text-fuchsia-400",
-    bg: "bg-fuchsia-400/10",
-    border: "border-fuchsia-400/30",
-    dot: "bg-fuchsia-400",
-    icon: GraduationCap,
   },
   github: {
     label: "GitHub",

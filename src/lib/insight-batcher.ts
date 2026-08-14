@@ -19,6 +19,25 @@ const pending = new Map<
 let timer: ReturnType<typeof setTimeout> | null = null;
 let inflight: Promise<void> | null = null;
 
+/**
+ * Module-level pub/sub so the "Refresh Insight" toolbar can re-fire every card
+ * that is currently showing "Insight queued — Groq is busy right now."
+ * Panels subscribe on mount; the toolbar calls `refreshQueuedInsights()`.
+ */
+type InsightRefreshListener = () => void;
+const refreshListeners = new Set<InsightRefreshListener>();
+
+export function subscribeInsightRefresh(fn: InsightRefreshListener): () => void {
+  refreshListeners.add(fn);
+  return () => {
+    refreshListeners.delete(fn);
+  };
+}
+
+export function refreshQueuedInsights(): void {
+  for (const fn of [...refreshListeners]) fn();
+}
+
 export function requestInsight(req: InsightRequest): Promise<InsightOutcome> {
   const key = `${req.source}|${req.sourceId}`;
   const existing = pending.get(key);

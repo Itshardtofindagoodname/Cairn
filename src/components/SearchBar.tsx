@@ -16,7 +16,7 @@ export function SearchBar({
   onChange,
   onSubmit,
   disabled,
-  placeholder = "Search datasets, models, papers & code across 8 sources…",
+  placeholder = "Search datasets, models, papers & code across 7 sources…",
 }: SearchBarProps) {
   const submit = () => {
     if (value.trim()) onSubmit(value);

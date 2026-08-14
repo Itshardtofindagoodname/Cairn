@@ -18,7 +18,7 @@ import type { RankBreakdown, SourceResult } from "./types";
  *
  * - relevance: TF-IDF of title+description vs the query (see tfidf.ts).
  * - authority: log-scaled popularity per source (HF downloads/likes, Zenodo
- *   downloads, GitHub stars, Semantic Scholar citations), min-max normalized
+ *   downloads, GitHub stars, citations), min-max normalized
  *   within the batch so no source's raw numbers dominate.
  * - recency: exponential half-life decay on publish/update date.
  *

@@ -14,7 +14,6 @@ const SOURCES = [
   { name: "arXiv", type: "papers" },
   { name: "GitHub", type: "code repositories" },
   { name: "Zenodo", type: "datasets" },
-  { name: "Semantic Scholar", type: "papers" },
   { name: "data.gov", type: "government datasets" },
   { name: "OpenML", type: "ML datasets" },
   { name: "Kaggle", type: "datasets & notebooks" },
@@ -34,7 +33,7 @@ export function About() {
         <h2 className="text-2xl font-bold text-zinc-100">What is Cairn?</h2>
         <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-400">
           Cairn is a federated search engine for the open research ecosystem. A
-          single query is fanned out across eight independent providers in
+          single query is fanned out across seven independent providers in
           parallel, and datasets, papers, models and code stream back live as
           they arrive. Results are deduplicated across sources, ranked by a
           transparent reproducibility signal, and every card ships with the

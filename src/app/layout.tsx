@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Cairn — Search open datasets, models & code",
   description:
-    "One search bar across Hugging Face, arXiv, GitHub, Zenodo, Semantic Scholar, data.gov, OpenML and Kaggle. Streams results live over SSE, ranks every result with a transparent Reproducibility Score, and offers an optional AI-assisted Discuss mode.",
+    "One search bar across Hugging Face, arXiv, GitHub, Zenodo, data.gov, OpenML and Kaggle. Streams results live over SSE, ranks every result with a transparent Reproducibility Score, and offers an optional AI-assisted Discuss mode.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

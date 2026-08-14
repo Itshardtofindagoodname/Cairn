@@ -10,6 +10,7 @@ import { SourceSelect, type SourceScope } from "./SourceSelect";
 import { ModeToggle, type SearchMode } from "./ModeToggle";
 import { TypeFilter } from "./TypeFilter";
 import { InterpretChip } from "./InterpretChip";
+import { InsightRefreshMenu } from "./InsightRefreshMenu";
 import { KaggleConnectDialog } from "./KaggleConnectDialog";
 import { mergeResults } from "@/lib/merge";
 import { isCommerciallyUsable } from "@/lib/license";
@@ -59,6 +60,16 @@ function readSourceScope(url: URL): SourceScope {
   return "all";
 }
 
+function readTypeFilter(url: URL): TypeFilterValue {
+  const raw = url.searchParams.get("type");
+  if (raw && (TYPE_FILTERS as readonly string[]).includes(raw)) return raw as TypeFilterValue;
+  return "all";
+}
+
+function readMode(url: URL): SearchMode {
+  return url.searchParams.get("mode") === "discuss" ? "discuss" : "basic";
+}
+
 function readQuery(url: URL): string {
   return (url.searchParams.get("q") ?? "").trim().slice(0, 120);
 }
@@ -70,23 +81,14 @@ export function SearchApp() {
   const [results, setResults] = useState<Record<SourceId, SourceResult[]>>(emptyResults);
   const [states, setStates] = useState<Record<SourceId, SourceState>>(initialStates);
   const [commercialOnly, setCommercialOnly] = useState(false);
-  const [scope, setScope] = useState<SourceScope>(() =>
-    typeof window === "undefined"
-      ? "all"
-      : readSourceScope(new URL(window.location.href)),
-  );
-  const [typeFilter, setTypeFilter] = useState<TypeFilterValue>(() => {
-    if (typeof window === "undefined") return "all";
-    const raw = new URL(window.location.href).searchParams.get("type");
-    if (raw && (TYPE_FILTERS as readonly string[]).includes(raw)) return raw as TypeFilterValue;
-    return "all";
-  });
-  const [mode, setMode] = useState<SearchMode>(() => {
-    if (typeof window === "undefined") return "basic";
-    return new URL(window.location.href).searchParams.get("mode") === "discuss"
-      ? "discuss"
-      : "basic";
-  });
+  // Keep these identical on server and client so SSR hydration matches. URL
+  // params (?source=…&type=…&mode=…) are applied post-mount in the restore
+  // effect below instead of being read here from `window` (reading the URL in
+  // a useState initializer made the client's first render diverge from the
+  // server's HTML, which broke the Radix ToggleGroups' data-state attributes).
+  const [scope, setScope] = useState<SourceScope>("all");
+  const [typeFilter, setTypeFilter] = useState<TypeFilterValue>("all");
+  const [mode, setMode] = useState<SearchMode>("basic");
   const [expansion, setExpansion] = useState<ExpansionInfo | null>(null);
   const [expansionDismissed, setExpansionDismissed] = useState(false);
   const [kaggleCreds, setKaggleCreds] = useState<{ username: string; key: string } | null>(null);
@@ -107,6 +109,10 @@ export function SearchApp() {
   const modeRef = useRef(mode);
   const credsRef = useRef(kaggleCreds);
   const initializedRef = useRef(false);
+  // True while the mount-time URL restore is applying scope/type/mode state, so
+  // the live re-trigger effect below doesn't re-run a search that the restore
+  // is about to launch itself (avoids a double-search when creds load fast).
+  const restoringRef = useRef(false);
 
   useEffect(() => {
     scopeRef.current = scope;
@@ -237,6 +243,7 @@ export function SearchApp() {
   // filters didn't re-run the query at all).
   useEffect(() => {
     if (!initializedRef.current) return;
+    if (restoringRef.current) return;
     const q = committedRef.current;
     if (q) runSearch(q);
   }, [scope, typeFilter, runSearch]);
@@ -258,7 +265,21 @@ export function SearchApp() {
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
-    const initialQuery = readQuery(new URL(window.location.href));
+    const url = new URL(window.location.href);
+    const initialQuery = readQuery(url);
+    // Sync provider scope / type filter / mode from the URL AFTER hydration so
+    // the server and client render the same first paint (no mismatch), then the
+    // controls reflect the shared link.
+    const scopeNow = readSourceScope(url);
+    const typeNow = readTypeFilter(url);
+    const modeNow = readMode(url);
+    scopeRef.current = scopeNow;
+    typeRef.current = typeNow;
+    modeRef.current = modeNow;
+    restoringRef.current = true;
+    setScope(scopeNow);
+    setTypeFilter(typeNow);
+    setMode(modeNow);
     void (async () => {
       let creds: { username: string; key: string } | null = null;
       try {
@@ -268,6 +289,7 @@ export function SearchApp() {
       }
       credsRef.current = creds;
       setKaggleCreds(creds);
+      restoringRef.current = false;
       if (initialQuery) runSearch(initialQuery);
     })();
   }, [runSearch]);
@@ -332,8 +354,8 @@ export function SearchApp() {
           Cairn
         </h1>
         <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base">
-          One query across Hugging Face, arXiv, GitHub, Zenodo, Semantic
-          Scholar, data.gov, OpenML &amp; Kaggle — datasets, papers, models and
+          One query across Hugging Face, arXiv, GitHub, Zenodo,
+          data.gov, OpenML &amp; Kaggle — datasets, papers, models and
           code stream in live, ranked by a transparent Reproducibility Score.
         </p>
       </header>
@@ -414,6 +436,12 @@ export function SearchApp() {
             <div className="rounded-xl border border-zinc-700 bg-zinc-900/60 px-3 py-2 text-xs text-zinc-400">
               Daily AI insight limit reached for {TYPE_FILTER_LABELS[typeFilter]} results —
               insights are capped per day on the free tier. Come back tomorrow.
+            </div>
+          )}
+
+          {config.groqAvailable && mode === "discuss" && (
+            <div className="flex items-center justify-end">
+              <InsightRefreshMenu />
             </div>
           )}
 

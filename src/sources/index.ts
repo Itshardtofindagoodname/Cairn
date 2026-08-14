@@ -4,7 +4,6 @@ import { zenodo } from "./zenodo";
 import { dataGov } from "./datagov";
 import { openML } from "./openml";
 import { arxiv } from "./arxiv";
-import { semanticscholar } from "./semanticscholar";
 import { github } from "./github";
 import { kaggle } from "./kaggle";
 
@@ -15,7 +14,6 @@ export const SOURCES: SourceAdapter[] = [
   arxiv,
   github,
   zenodo,
-  semanticscholar,
   dataGov,
   openML,
   kaggle,

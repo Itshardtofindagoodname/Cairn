@@ -136,9 +136,11 @@ async function handle(request: NextRequest) {
           ? expandQuery(q, { signal, fresh })
           : Promise.resolve(null);
 
-        // Accumulate per-source across every expansion term; the client gets a
-        // single source-result at the end (dedupe/merge runs client-side).
+        // Accumulate per-source across every expansion term; each source's
+        // term-0 results are streamed the moment they land so the client shows
+        // them without waiting for the slowest provider.
         const accumulated = new Map<SourceId, SourceResult[]>();
+        const term0Counts = new Map<SourceId, number>();
 
         const runSource = async (adapter: SourceAdapter, term: string, isFirst: boolean) => {
           if (signal.aborted) return;
@@ -165,12 +167,18 @@ async function handle(request: NextRequest) {
               ...filtered,
             ]);
             if (isFirst) {
+              // Emit this source's results immediately instead of waiting for
+              // every provider to finish — the client renders each batch as it
+              // streams in, keeping slow sources' results out of the critical
+              // path.
               const ranked = rankBatch(term, filtered);
+              term0Counts.set(adapter.id, filtered.length);
               push("source-status", {
                 source: adapter.id,
                 status: "ok",
                 count: ranked.length,
               });
+              push("source-result", { source: adapter.id, results: ranked });
             }
           } catch (err) {
             if (signal.aborted) return;
@@ -216,12 +224,21 @@ async function handle(request: NextRequest) {
           }
         }
 
-        // Emit each source's combined, ranked results.
+        // Re-emit only the sources whose result set grew after intent
+        // expansion; term-0 results were already streamed above. Updated
+        // source-status keeps the count badge in sync with the richer results.
         for (const adapter of activeSources) {
           if (signal.aborted) return;
           const all = accumulated.get(adapter.id) ?? [];
           if (all.length === 0) continue;
-          push("source-result", { source: adapter.id, results: rankBatch(q, all) });
+          if ((term0Counts.get(adapter.id) ?? 0) === all.length) continue;
+          const ranked = rankBatch(q, all);
+          push("source-status", {
+            source: adapter.id,
+            status: "ok",
+            count: ranked.length,
+          });
+          push("source-result", { source: adapter.id, results: ranked });
         }
 
         push("done", { sources: activeSources.map((s) => s.id) });

@@ -4,7 +4,6 @@ export const SOURCE_IDS = [
   "datagov",
   "openml",
   "arxiv",
-  "semanticscholar",
   "github",
   "kaggle",
 ] as const;
