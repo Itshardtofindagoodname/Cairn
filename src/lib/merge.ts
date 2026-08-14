@@ -23,11 +23,12 @@ export function mergeResults(results: SourceResult[]): MergedResult[] {
     let best: { group: MergedResult; confidence: number } | null = null;
 
     for (const group of groups) {
+      const primary = group.origins[0];
       const confidence = sameItemConfidence(target, {
         title: group.title,
-        authors: group.authors,
-        doi: group.doi,
-        arxivId: group.arxivId,
+        authors: primary.authors,
+        doi: primary.doi,
+        arxivId: primary.arxivId,
       });
       if (confidence > 0 && (!best || confidence > best.confidence)) {
         best = { group, confidence };

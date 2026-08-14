@@ -65,7 +65,7 @@ function normalizeId(id: string | null | undefined): string | null {
   if (!trimmed) return null;
   // Strip any leading prefix a source may tack on ("arxiv:2103.00112",
   // "doi:10.5281/…", URLs).
-  return trimmed.replace(/^(arxiv|doi|http:\/\/arxiv\.org\/abs\/|https:\/\/arxiv\.org\/abs\/|https?:\/\/doi\.org\/)/, "");
+  return trimmed.replace(/^(arxiv:|doi:|http:\/\/arxiv\.org\/abs\/|https:\/\/arxiv\.org\/abs\/|https?:\/\/doi\.org\/)/, "");
 }
 
 /** Exact-ID match: shared arXiv id or DOI is a definitive same-item signal. */

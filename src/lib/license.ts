@@ -18,7 +18,7 @@ export function normalizeLicense(
 
   if (lower.includes("mit")) return { license: "MIT", raw: input };
   if (lower.includes("apache")) return { license: "Apache-2.0", raw: input };
-  if (lower.includes("cc-by-nc") || lower.includes("cc by nc"))
+  if (lower.includes("cc-by-nc") || lower.includes("cc by nc") || lower.includes("cc by-nc"))
     return { license: "CC-BY-NC", raw: input };
   if (lower.includes("cc-by") || lower.includes("cc by"))
     return { license: "CC-BY", raw: input };

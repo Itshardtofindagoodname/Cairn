@@ -7,7 +7,7 @@
 
 | Axis | Score | Verdict |
 | --- | --- | --- |
-| Tests | **1 / 10** | No test files, no test runner, no CI hook. |
+| Tests | **7 / 10** | 9 suites / 89 unit tests (Jest + ts-jest). No integration/E2E/CI yet. |
 | SEO | **8.5 / 10** | Rich metadata, structured data, sitemap + robots. Weak on surface area. |
 | AEO (Answer Engine Opt.) | **8.5 / 10** | `llms.txt`, AI-bot allowlist, FAQPage schema. |
 | GEO (Generative Engine Opt.) | **8 / 10** | Citeable structured data + LLM-friendly docs; no provenance/geo markup. |
@@ -16,26 +16,40 @@
 | Scalability | **6 / 10** | Clever caching, but serverless-per-instance SQLite + long SSE limits growth. |
 | Performance | **7.5 / 10** | Streaming, LRU + SQLite cache, range-fetch previews. |
 | Accessibility | **7.5 / 10** | Radix primitives, aria-hidden decorative icons, semantic h1. |
-| Maintainability | **8 / 10** | Clean adapter architecture, typed, excellent README. No tests. |
+| Maintainability | **8.5 / 10** | Clean adapter architecture, typed, excellent README, 89 unit tests. |
 
-**Overall: ~7.1 / 10** — a well-architected, privacy-forward app with strong
-metadata/AEO work, dragged down by a total absence of automated tests and a
-caching design that does not share state across serverless instances.
+**Overall: ~7.7 / 10** — a well-architected, privacy-forward app with strong
+metadata/AEO work and now a real unit-test layer over its core algorithms,
+dragged down mainly by a caching design that does not share state across
+serverless instances.
 
 ---
 
-## Tests — 1 / 10
+## Tests — 7 / 10
 
-- **No test files exist** (`*.test.*`, `*.spec.*` → zero matches in `src/`).
-- No `test` script in `package.json`; no Jest/Vitest/Playwright/Testing Library
-  dependency. The `lint` script is the only automated check.
-- Ranking (`src/lib/tfidf.ts`, `ranking.ts`), dedupe (`dedupe.ts`, `merge.ts`),
-  license normalization (`license.ts`) and the repro score (`reproducibility/`)
-  are pure functions that would be trivial and high-value to unit test.
+- **Jest + ts-jest** wired up (`jest.config.js`, `npm test`, node env,
+  `@jest/globals` imports so ESLint stays clean).
+- **9 suites / 89 tests** covering every pure-logic module:
+  `tokenize`, `tfidf`, `ranking`, `dedupe`, `merge`, `license`, `format`,
+  `lru-cache`, and the `reproducibility/score` engine (time-based cases use
+  fake timers).
+- Writing the tests surfaced **three real bugs, now fixed**:
+  1. `dedupe.ts` — `normalizeId` stripped `doi`/`arxiv` but not their colons,
+     so `"doi:10.5281/…"` normalized to `":10.5281/…"` and exact-ID merges
+     silently never fired.
+  2. `merge.ts` — cross-result comparison read `group.doi`/`group.arxivId`/
+     `group.authors`, which were never stored on the group (they live in
+     `origins[0]`), so DOI/author-based dedupe never triggered.
+  3. `license.ts` — `"CC BY-NC 4.0"` (space form) fell through to `CC-BY`.
 
-**Recommendations:** add Vitest; unit-test `tfidf`, `ranking`, `dedupe/merge`,
-`license`, `kaggle-store` (crypto round-trip); add an integration test that
-hits `/api/search` with a mocked provider; add a smoke E2E for the search flow.
+**Gaps** (why not higher): no component/`jsdom` tests, no API-route
+integration tests (e.g. `/api/search` with mocked providers), no
+`kaggle-store` crypto round-trip test, no E2E, and the suite is not yet wired
+into CI.
+
+**Recommendations:** add an integration test that hits `/api/search` with a
+mocked provider; a `kaggle-store` AES round-trip test; a smoke E2E for the
+search flow; run `npm test` in CI alongside `npm run lint`.
 
 ---
 
@@ -214,23 +228,25 @@ routes (prerendered statically here — fine).
 
 ---
 
-## Maintainability — 8 / 10
+## Maintainability — 8.5 / 10
 
 - One `SourceAdapter` interface per provider, registry-driven (`src/sources/index.ts`);
   adding a source auto-wires dropdown, ranking, dedupe and snippets.
 - Clear layering (`sources` → `lib` → `components` → `app`), shared types,
   no dead code found, `eslint` clean.
+- 89 unit tests guard the core algorithms and already caught three real bugs.
 - Excellent README documenting architecture, env vars, deploy, and limits.
 - The AGENTS/CLAUDE agent-rule files and `.env.example` are repo-hygiene wins.
 
-**Gaps:** zero tests (see above) and some legacy-compat strings (e.g. legacy
-`DATAFORGE_CACHE_PATH` env) that could be retired.
+**Gaps:** no CI pipeline running `npm test` yet, and some legacy-compat strings
+(e.g. legacy `DATAFORGE_CACHE_PATH` env) that could be retired.
 
 ---
 
 ## Final notes
 
-Highest-leverage fixes, in order: (1) add automated tests for the pure
-ranking/dedupe/repro logic, (2) add CSP + HSTS and a `/api/search` rate guard,
-(3) move the cache to a shared store for real scale, (4) expand SEO surface
-with provider/type landing pages, (5) add `aria-live` to the streaming list.
+Highest-leverage fixes, in order: (1) ~~add automated tests~~ — done (89
+unit tests, `npm test`); wire them into CI next, (2) add CSP + HSTS and a
+`/api/search` rate guard, (3) move the cache to a shared store for real scale,
+(4) expand SEO surface with provider/type landing pages, (5) add `aria-live`
+to the streaming list.
