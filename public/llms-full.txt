@@ -1,0 +1,66 @@
+# Cairn — full documentation
+
+## Overview
+
+Cairn is a federated search engine for the open research ecosystem. It is, in one phrase, "Google for open data and ML". One search bar fans out to **Hugging Face**, **arXiv**, **GitHub**, **Zenodo**, **data.gov**, **OpenML** and **Kaggle** in parallel, streams results back live over server-sent events as each source responds, ranks every result with an explainable multi-signal score, and gives each one a transparent **Reproducibility Score** so you can tell at a glance whether it is worth a download.
+
+Basic search requires no paid APIs and no sign-up. The AI-powered features (Discuss mode and AI Insight) run on a free Groq tier and stay quietly off when no key is configured.
+
+## How a search works
+
+1. **Fan out** — your query goes to all seven providers in parallel.
+2. **Stream** — each source pushes its own normalized, ranked results as they arrive.
+3. **Merge & rank** — duplicates collapse across sources and a reproducibility signal orders the mix.
+4. **Load** — every card ships with copy-paste loading code for that exact item.
+
+Each provider resolves independently (`Promise.allSettled`), so a slow or failing API never blocks the others — you see an "unavailable" or "rate-limited" chip for that source while the rest keep streaming. Results are pushed over **fetch-based SSE**, the same format a chat UI would use, so the first cards appear in under a second.
+
+## Sources
+
+| Source | Type |
+| --- | --- |
+| Hugging Face | datasets & models |
+| arXiv | papers (abstracts) |
+| GitHub | code repositories (stars) |
+| Zenodo | datasets (downloads) |
+| data.gov | US government datasets |
+| OpenML | ML datasets |
+| Kaggle | datasets & notebooks |
+
+## Modes
+
+- **Basic mode** — fast keyword search. Your query goes out verbatim to every source, results stream in, merge and rank. No API keys required.
+- **Discuss mode** — ask in plain language. An AI (Groq, optional key) expands your query into related search terms ("3d printing filaments" becomes "3d printing filaments, fdm materials, slicer settings") and Cairn fans out over all of them, merging results. The interpretation shows as a dismissible chip. On any AI failure the exact query is used silently. Expansions are cached 7 days (served stale up to 7 more), so repeat queries stop consuming Groq quota almost immediately.
+
+## AI Insight
+
+For every result, Cairn can generate a short plain-language "why you might care" — what the item is, who made it, how it is used and licensed, and practical caveats before you download. Insights are generated on demand (one click per card), cached per result for 21 days, and rate-limited globally (default 50/day across all users). A card whose insight is still being written shows a "Retry" button; if the AI is busy or unavailable it degrades to a calm "queued" state instead of failing.
+
+## The Reproducibility Score
+
+Every card carries a transparent 0-100 score, weighted:
+
+- **Metadata — 20%** — description substance, size, dates present.
+- **License — 20%** — permissive vs. non-commercial vs. missing.
+- **Liveness — 35%** — is the result's own page still reachable?
+- **Maintenance — 25%** — how recently was the underlying work updated?
+
+Metadata and license score instantly from the card. Liveness and maintenance are checked lazily as each card scrolls into view (via an IntersectionObserver) and cached for 24 hours; while pending they contribute a neutral 0.5 and the badge pulses until the data arrives. Hover any badge to see the exact breakdown.
+
+## Caching & performance
+
+- In-memory LRU (100 entries) for sub-millisecond hits on back-to-back identical queries.
+- Zero-infrastructure SQLite file cache (2-hour TTL) for cross-restart reuse. On Vercel it uses the ephemeral filesystem, so the cache lives for the lifetime of a lambda instance.
+- The cache stores search payloads only — nothing you load is re-hosted; you always end up at the original provider.
+
+## Privacy & security
+
+- Searches are anonymous: no accounts, no analytics, and no server-side logs of your queries.
+- Optional personal Kaggle credentials are **AES-256-GCM encrypted on your device**: the ciphertext lives in localStorage, the symmetric key lives in IndexedDB (never localStorage), and the server only ever sees the key as request-scoped headers on a single `/api/search` POST — it is never persisted server-side.
+- Cairn can use a small shared Kaggle key when available. Kaggle does not publish numeric rate limits, so Cairn tracks its own conservative budget and flips to a calm "connect your own account" state well before Kaggle's dynamic limiting would kick in.
+- Groq API calls (Discuss mode, AI Insight) are rate-tracked and cached so free-tier quota is not wasted on repeat queries.
+
+## Links
+
+- [Home](https://cairn-search.vercel.app)
+- [How Cairn works](https://cairn-search.vercel.app/#about)

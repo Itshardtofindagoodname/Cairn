@@ -1,0 +1,28 @@
+# Cairn
+
+> A federated search engine for open data and machine learning — one query across Hugging Face, arXiv, GitHub, Zenodo, data.gov, OpenML and Kaggle, streaming results live and ranking every one with a transparent Reproducibility Score.
+
+## About
+
+Cairn is a federated search engine for the open research ecosystem. A single query is fanned out across seven independent providers in parallel, and datasets, papers, models and code stream back live as they arrive. Results are deduplicated across sources, ranked by a transparent reproducibility signal, and every card ships with the exact code to load or download what you found.
+
+## Key facts
+
+- No API keys or sign-up required for basic search. Optional AI features run on a free Groq tier.
+- Seven sources: Hugging Face (datasets & models), arXiv (papers), GitHub (code repositories), Zenodo (datasets), data.gov (government datasets), OpenML (ML datasets), Kaggle (datasets & notebooks).
+- Results stream live over server-sent events (SSE) as each provider responds; a slow or failing source never blocks the others.
+- Every result carries a transparent 0-100 Reproducibility Score: 20% metadata, 20% license, 35% liveness (page reachable?), 25% maintenance (recently updated?).
+- Optional Discuss mode expands natural-language queries into related search terms via Groq; expansions are cached 7 days and fall back silently to the exact query on any failure.
+- Optional AI Insight produces a one-click plain-language summary per result; cached 21 days, rate-limited daily.
+- Provider responses are cached in a zero-infrastructure SQLite file (2-hour TTL) with a small in-memory LRU on top.
+- Searches are anonymous: no accounts, no analytics, no server-side query logs. Nothing is re-hosted — every result links to the original provider.
+- Optional personal Kaggle credentials are AES-256-GCM encrypted on-device and only ever sent to Kaggle for the user's own search.
+
+## Sources
+
+- [Home](https://cairn-search.vercel.app)
+
+## Links
+
+- [Home](https://cairn-search.vercel.app)
+- [How Cairn works](https://cairn-search.vercel.app/#about)

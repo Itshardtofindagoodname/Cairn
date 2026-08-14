@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Database } from "lucide-react";
+import Image from "next/image";
 import { SearchBar } from "./SearchBar";
 import { ResultList } from "./ResultList";
 import { LicenseFilter } from "./LicenseFilter";
@@ -361,8 +361,14 @@ export function SearchApp() {
   return (
     <div className="relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col px-4 pb-20">
       <header className="pt-16 pb-8 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10">
-          <Database className="h-6 w-6 text-amber-400" aria-hidden />
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10 p-1.5">
+          <Image
+            src="/cairn_logo.png"
+            alt="Cairn logo"
+            width={48}
+            height={48}
+            className="h-full w-full object-contain"
+          />
         </div>
         <h1 className="text-4xl font-extrabold tracking-tight text-zinc-50 sm:text-5xl">
           Cairn

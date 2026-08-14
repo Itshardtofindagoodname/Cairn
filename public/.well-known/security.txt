@@ -1,0 +1,4 @@
+Contact: https://cairn-search.vercel.app/#about
+Preferred-Languages: en
+Policy: https://cairn-search.vercel.app/#about
+Expires: 2027-08-14T00:00:00.000Z
