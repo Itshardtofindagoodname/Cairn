@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync, existsSync } from "node:fs";
-import path from "node:path";
+import { initSqlite } from "./sqlite";
 import type { GroqRateInfo } from "./groq";
 
 /**
@@ -18,29 +17,24 @@ let db: Database.Database | null = null;
 
 const QUEUE_THRESHOLD = 0.2;
 
-function getDb(): Database.Database {
-  if (db) return db;
-  const isVercel = process.env.VERCEL === "1";
-  const file =
-    process.env.CAIRN_CACHE_PATH ??
-    process.env.DATAFORGE_CACHE_PATH ??
-    path.join(process.cwd(), ".cairn", "cache.db");
-  const dir = path.dirname(file);
-  if (!isVercel && !existsSync(dir)) mkdirSync(dir, { recursive: true });
-  db = new Database(file);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS groq_rate (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      payload TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-  `);
+function getDb(): Database.Database | null {
+  if (!db) {
+    db = initSqlite(`
+      CREATE TABLE IF NOT EXISTS groq_rate (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        payload TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+  }
   return db;
 }
 
 /** Persist the most recent rate-limit observation from a Groq response. */
 export function recordGroqRate(rate: GroqRateInfo): void {
-  getDb()
+  const handle = getDb();
+  if (!handle) return;
+  handle
     .prepare(
       `INSERT INTO groq_rate (id, payload, updated_at) VALUES (1, ?, ?)
        ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
@@ -49,7 +43,9 @@ export function recordGroqRate(rate: GroqRateInfo): void {
 }
 
 function readRate(): { payload: string; updated_at: number } | null {
-  const row = getDb()
+  const handle = getDb();
+  if (!handle) return null;
+  const row = handle
     .prepare("SELECT payload, updated_at FROM groq_rate WHERE id = 1")
     .get() as { payload: string; updated_at: number } | undefined;
   return row ?? null;

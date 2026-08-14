@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync, existsSync } from "node:fs";
-import path from "node:path";
+import { initSqlite } from "./sqlite";
 import { groqChat, GroqRateLimitedError, GroqUnavailableError } from "./groq";
 import { recordGroqRate } from "./rate-tracker";
 
@@ -28,23 +27,16 @@ let db: Database.Database | null = null;
 
 const STALE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
-function getDb(): Database.Database {
-  if (db) return db;
-  const isVercel = process.env.VERCEL === "1";
-  const file =
-    process.env.CAIRN_CACHE_PATH ??
-    process.env.DATAFORGE_CACHE_PATH ??
-    path.join(process.cwd(), ".cairn", "cache.db");
-  const dir = path.dirname(file);
-  if (!isVercel && !existsSync(dir)) mkdirSync(dir, { recursive: true });
-  db = new Database(file);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS intent_cache (
-      query TEXT PRIMARY KEY,
-      payload TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-  `);
+function getDb(): Database.Database | null {
+  if (!db) {
+    db = initSqlite(`
+      CREATE TABLE IF NOT EXISTS intent_cache (
+        query TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+  }
   return db;
 }
 
@@ -93,11 +85,13 @@ export async function expandQuery(
   if (!trimmed) return fallback;
 
   const now = Date.now();
-  const row = opts.fresh
-    ? undefined
-    : (getDb()
-        .prepare("SELECT payload, created_at FROM intent_cache WHERE query = ?")
-        .get(trimmed) as IntentRow | undefined);
+  const dbHandle = getDb();
+  const row =
+    opts.fresh || !dbHandle
+      ? undefined
+      : (dbHandle
+          .prepare("SELECT payload, created_at FROM intent_cache WHERE query = ?")
+          .get(trimmed) as IntentRow | undefined);
 
   if (row) {
     const parsed = parsePayload(row.payload);
@@ -105,7 +99,9 @@ export async function expandQuery(
       if (now - row.created_at < STALE_TTL_MS) {
         return parsed;
       }
-      getDb().prepare("DELETE FROM intent_cache WHERE query = ?").run(trimmed);
+      dbHandle
+        ?.prepare("DELETE FROM intent_cache WHERE query = ?")
+        .run(trimmed);
     }
   }
 
@@ -134,8 +130,8 @@ export async function expandQuery(
       };
     }
 
-    getDb()
-      .prepare(
+    dbHandle
+      ?.prepare(
         "INSERT INTO intent_cache (query, payload, created_at) VALUES (?, ?, ?)",
       )
       .run(trimmed, JSON.stringify(expansion), now);

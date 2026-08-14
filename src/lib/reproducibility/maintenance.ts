@@ -1,7 +1,6 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { mkdirSync, existsSync } from "node:fs";
-import path from "node:path";
+import { initSqlite } from "../sqlite";
 
 export interface MaintenanceResult {
   /** Only set for GitHub repos (the "is it being maintained?" component). */
@@ -23,23 +22,16 @@ let db: Database.Database | null = null;
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-function getDb(): Database.Database {
-  if (db) return db;
-  const isVercel = process.env.VERCEL === "1";
-  const file =
-    process.env.CAIRN_CACHE_PATH ??
-    process.env.DATAFORGE_CACHE_PATH ??
-    path.join(process.cwd(), ".cairn", "cache.db");
-  const dir = path.dirname(file);
-  if (!isVercel && !existsSync(dir)) mkdirSync(dir, { recursive: true });
-  db = new Database(file);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS maintenance_cache (
-      url_hash TEXT PRIMARY KEY,
-      payload TEXT NOT NULL,
-      checked_at INTEGER NOT NULL
-    );
-  `);
+function getDb(): Database.Database | null {
+  if (!db) {
+    db = initSqlite(`
+      CREATE TABLE IF NOT EXISTS maintenance_cache (
+        url_hash TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        checked_at INTEGER NOT NULL
+      );
+    `);
+  }
   return db;
 }
 
@@ -73,8 +65,12 @@ export async function getMaintenance(url: string): Promise<MaintenanceResult> {
   const key = hash(url);
 
   const row = db
-    .prepare("SELECT payload, checked_at FROM maintenance_cache WHERE url_hash = ?")
-    .get(key) as { payload: string; checked_at: number } | undefined;
+    ? (db
+        .prepare(
+          "SELECT payload, checked_at FROM maintenance_cache WHERE url_hash = ?",
+        )
+        .get(key) as { payload: string; checked_at: number } | undefined)
+    : undefined;
   if (row && Date.now() - row.checked_at < CACHE_TTL_MS) {
     try {
       return JSON.parse(row.payload) as MaintenanceResult;
@@ -109,7 +105,7 @@ export async function getMaintenance(url: string): Promise<MaintenanceResult> {
     result = { status: "none", lastPush: null, archived: null, detail: null };
   }
 
-  db.prepare(
+  db?.prepare(
     `INSERT INTO maintenance_cache (url_hash, payload, checked_at) VALUES (?, ?, ?)
      ON CONFLICT(url_hash) DO UPDATE SET payload = excluded.payload, checked_at = excluded.checked_at`,
   ).run(key, JSON.stringify(result), Date.now());

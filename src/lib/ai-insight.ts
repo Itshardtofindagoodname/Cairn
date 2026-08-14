@@ -1,7 +1,6 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { mkdirSync, existsSync } from "node:fs";
-import path from "node:path";
+import { initSqlite } from "./sqlite";
 import { groqChat, GroqRateLimitedError, GroqUnavailableError } from "./groq";
 import { recordGroqRate, groqShouldQueue } from "./rate-tracker";
 
@@ -50,27 +49,20 @@ const CACHE_TTL_MS = 21 * 24 * 60 * 60 * 1000;
 const DAILY_CAP = Number(process.env.AI_INSIGHT_DAILY_CAP ?? 50);
 const MAX_TOKENS = 200;
 
-function getDb(): Database.Database {
-  if (db) return db;
-  const isVercel = process.env.VERCEL === "1";
-  const file =
-    process.env.CAIRN_CACHE_PATH ??
-    process.env.DATAFORGE_CACHE_PATH ??
-    path.join(process.cwd(), ".cairn", "cache.db");
-  const dir = path.dirname(file);
-  if (!isVercel && !existsSync(dir)) mkdirSync(dir, { recursive: true });
-  db = new Database(file);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ai_insights (
-      result_key TEXT PRIMARY KEY,
-      payload TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS ai_insight_daily (
-      date TEXT PRIMARY KEY,
-      count INTEGER NOT NULL
-    );
-  `);
+function getDb(): Database.Database | null {
+  if (!db) {
+    db = initSqlite(`
+      CREATE TABLE IF NOT EXISTS ai_insights (
+        result_key TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ai_insight_daily (
+        date TEXT PRIMARY KEY,
+        count INTEGER NOT NULL
+      );
+    `);
+  }
   return db;
 }
 
@@ -84,14 +76,18 @@ function today(now = Date.now()): string {
 
 export function aiInsightDailyRemaining(now = Date.now()): number {
   if (DAILY_CAP <= 0) return 0;
-  const row = getDb()
+  const handle = getDb();
+  if (!handle) return DAILY_CAP;
+  const row = handle
     .prepare("SELECT count FROM ai_insight_daily WHERE date = ?")
     .get(today(now)) as { count: number } | undefined;
   return Math.max(0, DAILY_CAP - (row?.count ?? 0));
 }
 
 function consumeDaily(now = Date.now()): void {
-  getDb()
+  const handle = getDb();
+  if (!handle) return;
+  handle
     .prepare(
       `INSERT INTO ai_insight_daily (date, count) VALUES (?, 1)
        ON CONFLICT(date) DO UPDATE SET count = count + 1`,
@@ -100,12 +96,14 @@ function consumeDaily(now = Date.now()): void {
 }
 
 function cacheLookup(key: string, now = Date.now()): AiInsight | null {
-  const row = getDb()
+  const handle = getDb();
+  if (!handle) return null;
+  const row = handle
     .prepare("SELECT payload, created_at FROM ai_insights WHERE result_key = ?")
     .get(key) as { payload: string; created_at: number } | undefined;
   if (!row) return null;
   if (now - row.created_at > CACHE_TTL_MS) {
-    getDb().prepare("DELETE FROM ai_insights WHERE result_key = ?").run(key);
+    handle.prepare("DELETE FROM ai_insights WHERE result_key = ?").run(key);
     return null;
   }
   try {
@@ -179,7 +177,9 @@ export async function getAiInsight(req: InsightRequest, opts: { signal?: AbortSi
 
     consumeDaily();
     getDb()
-      .prepare("INSERT INTO ai_insights (result_key, payload, created_at) VALUES (?, ?, ?)")
+      ?.prepare(
+        "INSERT INTO ai_insights (result_key, payload, created_at) VALUES (?, ?, ?)",
+      )
       .run(key, JSON.stringify(parsed), Date.now());
 
     return { status: "ok", key, insight: parsed };
@@ -199,7 +199,9 @@ export async function getAiInsight(req: InsightRequest, opts: { signal?: AbortSi
         if (!parsed) return { status: "queued", key };
         consumeDaily();
         getDb()
-          .prepare("INSERT INTO ai_insights (result_key, payload, created_at) VALUES (?, ?, ?)")
+          ?.prepare(
+            "INSERT INTO ai_insights (result_key, payload, created_at) VALUES (?, ?, ?)",
+          )
           .run(key, JSON.stringify(parsed), Date.now());
         return { status: "ok", key, insight: parsed };
       } catch {

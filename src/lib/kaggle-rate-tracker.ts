@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync, existsSync } from "node:fs";
-import path from "node:path";
+import { initSqlite } from "./sqlite";
 
 /**
  * Shared-key Kaggle usage tracker.
@@ -28,23 +27,16 @@ const HANDOFF_THRESHOLD = 0.75;
 
 const WINDOW_MS = WINDOW_MINUTES * 60 * 1000;
 
-function getDb(): Database.Database {
-  if (db) return db;
-  const isVercel = process.env.VERCEL === "1";
-  const file =
-    process.env.CAIRN_CACHE_PATH ??
-    process.env.DATAFORGE_CACHE_PATH ??
-    path.join(process.cwd(), ".cairn", "cache.db");
-  const dir = path.dirname(file);
-  if (!isVercel && !existsSync(dir)) mkdirSync(dir, { recursive: true });
-  db = new Database(file);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS kaggle_usage (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      used INTEGER NOT NULL DEFAULT 0,
-      window_start INTEGER NOT NULL
-    );
-  `);
+function getDb(): Database.Database | null {
+  if (!db) {
+    db = initSqlite(`
+      CREATE TABLE IF NOT EXISTS kaggle_usage (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        used INTEGER NOT NULL DEFAULT 0,
+        window_start INTEGER NOT NULL
+      );
+    `);
+  }
   return db;
 }
 
@@ -58,7 +50,9 @@ function currentWindowStart(now: number): number {
 }
 
 function readUsage(now: number): UsageRow {
-  const row = getDb()
+  const handle = getDb();
+  if (!handle) return { used: 0, window_start: currentWindowStart(now) };
+  const row = handle
     .prepare("SELECT used, window_start FROM kaggle_usage WHERE id = 1")
     .get() as UsageRow | undefined;
   if (!row) return { used: 0, window_start: currentWindowStart(now) };
@@ -68,9 +62,16 @@ function readUsage(now: number): UsageRow {
 
 /** Record one shared-key request. Resets the window when it expires. */
 export function recordKaggleRequest(now = Date.now()): void {
+  const handle = getDb();
+  if (!handle) {
+    console.log(
+      "[cairn:kaggle-rate] shared usage tracking disabled (cache unavailable)",
+    );
+    return;
+  }
   const usage = readUsage(now);
   const nextUsed = usage.used + 1;
-  getDb()
+  handle
     .prepare(
       `INSERT INTO kaggle_usage (id, used, window_start)
        VALUES (1, ?, ?)
