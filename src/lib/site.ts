@@ -32,6 +32,6 @@ export const SITE_KEYWORDS = [
   "research data search",
 ];
 
-export const LOGO_PATH = "/cairn_logo.png";
+export const LOGO_PATH = "/icon";
 export const LOGO_URL = `${SITE_URL}${LOGO_PATH}`;
-export const ICON_PATH = "/cairn_ico.ico";
+export const ICON_PATH = "/apple-icon";

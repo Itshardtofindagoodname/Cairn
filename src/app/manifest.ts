@@ -12,14 +12,14 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: "#f59e0b",
     icons: [
       {
-        src: "/cairn_logo.png",
-        sizes: "1254x1254",
+        src: "/icon",
+        sizes: "512x512",
         type: "image/png",
       },
       {
-        src: "/cairn_ico.ico",
-        sizes: "any",
-        type: "image/x-icon",
+        src: "/apple-icon",
+        sizes: "180x180",
+        type: "image/png",
       },
     ],
   };

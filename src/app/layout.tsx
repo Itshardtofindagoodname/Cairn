@@ -43,20 +43,11 @@ export const metadata: Metadata = {
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
     locale: "en_US",
-    images: [
-      {
-        url: LOGO_URL,
-        width: 1254,
-        height: 1254,
-        alt: "Cairn — search open datasets, models, papers and code",
-      },
-    ],
   },
   twitter: {
     card: "summary_large_image",
     title: SITE_TITLE,
     description: SITE_DESCRIPTION,
-    images: [LOGO_URL],
   },
   robots: {
     index: true,
